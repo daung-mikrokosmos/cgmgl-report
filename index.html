@@ -1,0 +1,186 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="color-scheme" content="light" />
+    <title>CGMGL Report</title>
+    <link rel="icon" type="image/png" href="favicon.png" sizes="32x32" />
+    <link rel="apple-touch-icon" href="favicon.png" />
+    <link rel="stylesheet" href="styles.css" />
+</head>
+
+<body>
+    <div class="bg-gradient" aria-hidden="true"></div>
+    <main class="shell">
+        <header class="hero glass">
+            <h1>CGMGL Report</h1>
+            <p class="lede">Powered by QPASS.</p>
+            <div class="sample-dl" role="group" aria-label="Download sample CSV files">
+                <button type="button" class="btn secondary sample-dl-btn" id="download-sample-basics"
+                    title="Download sample-basics.csv">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3" />
+                    </svg>
+                    Basics sample.csv
+                </button>
+                <button type="button" class="btn secondary sample-dl-btn" id="download-sample-actual"
+                    title="Download sample-actual.csv">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3" />
+                    </svg>
+                    Actual sample.csv
+                </button>
+            </div>
+        </header>
+
+        <section class="card glass" aria-labelledby="meta-heading">
+            <div class="card-head">
+                <h2 id="meta-heading" class="card-title">Basics</h2>
+                <label class="btn file-btn" title="Import basics from CSV (name, place, plans, next, problems)">
+                    <input type="file" id="basics-csv" accept=".csv,text/csv" hidden />
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M17 8l-5-5-5 5M12 3v12" />
+                    </svg>
+                    <span>CSV</span>
+                </label>
+            </div>
+            <p class="hint basics-hint">Basics CSV: <code>name</code>, <code>place</code>,
+                <code>plan1</code>…<code>plan5</code>, <code>next1</code>…<code>next5</code>,
+                <code>problem1</code>…<code>problem5</code> (first data row; max 5 each).
+            </p>
+            <div class="grid two">
+                <label class="field">
+                    <span class="label">Name</span>
+                    <input type="text" id="report-name" placeholder="Your name" autocomplete="name"
+                        aria-describedby="error-name" />
+                    <span id="error-name" class="field-error" role="alert" hidden></span>
+                </label>
+                <label class="field">
+                    <span class="label">Location</span>
+                    <select id="report-location">
+                        <option value="Office">Office</option>
+                        <option value="WFH">WFH</option>
+                    </select>
+                </label>
+            </div>
+        </section>
+
+        <section class="card glass" aria-labelledby="plan-heading">
+            <div class="card-head">
+                <h2 id="plan-heading" class="card-title">Plans</h2>
+                <button type="button" class="btn icon-btn" id="add-plan" title="Add plan item"
+                    aria-label="Add plan item">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M12 5v14M5 12h14" />
+                    </svg>
+                </button>
+            </div>
+            <div id="plan-list" class="dynamic-list"></div>
+            <p id="error-plan" class="field-error field-error-block" role="alert" hidden></p>
+        </section>
+
+        <section class="card glass" aria-labelledby="actual-heading">
+            <div class="card-head">
+                <h2 id="actual-heading" class="card-title">Actual</h2>
+                <div class="card-actions">
+                    <label class="btn file-btn" title="Import Actual rows from CSV">
+                        <input type="file" id="actual-csv" accept=".csv,text/csv" hidden />
+                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                            stroke-width="2">
+                            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M17 8l-5-5-5 5M12 3v12" />
+                        </svg>
+                        <span>CSV</span>
+                    </label>
+                    <button type="button" class="btn icon-btn" id="add-actual" title="Add actual row"
+                        aria-label="Add actual row">
+                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                            stroke-width="2">
+                            <path d="M12 5v14M5 12h14" />
+                        </svg>
+                    </button>
+                </div>
+            </div>
+            <p class="hint">CSV columns: <code>name</code>, <code>branch</code>, <code>status</code>,
+                <code>deadline</code>, <code>progress</code>
+            </p>
+            <div id="actual-list" class="dynamic-list actual-list"></div>
+            <p id="error-actual" class="field-error field-error-block" role="alert" hidden></p>
+        </section>
+
+        <section class="card glass" aria-labelledby="next-heading">
+            <div class="card-head">
+                <h2 id="next-heading" class="card-title">Next</h2>
+                <button type="button" class="btn icon-btn" id="add-next" title="Add next item"
+                    aria-label="Add next item">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M12 5v14M5 12h14" />
+                    </svg>
+                </button>
+            </div>
+            <div id="next-list" class="dynamic-list"></div>
+            <p id="error-next" class="field-error field-error-block" role="alert" hidden></p>
+        </section>
+
+        <section class="card glass" aria-labelledby="problem-heading">
+            <div class="card-head">
+                <h2 id="problem-heading" class="card-title">Problem</h2>
+                <button type="button" class="btn icon-btn" id="add-problem" title="Add problem item"
+                    aria-label="Add problem item">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M12 5v14M5 12h14" />
+                    </svg>
+                </button>
+            </div>
+            <div id="problem-list" class="dynamic-list"></div>
+        </section>
+
+        <div class="actions-bar">
+            <button type="button" class="btn primary" id="generate-btn">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+                    <polyline points="14 2 14 8 20 8" />
+                    <line x1="16" y1="13" x2="8" y2="13" />
+                    <line x1="16" y1="17" x2="8" y2="17" />
+                    <polyline points="10 9 9 9 8 9" />
+                </svg>
+                Generate YAML
+            </button>
+        </div>
+    </main>
+
+    <div id="modal-overlay" class="modal-overlay" hidden>
+        <div class="modal glass" role="dialog" aria-modal="true" aria-labelledby="modal-title">
+            <div class="modal-head">
+                <h2 id="modal-title">Generated YAML</h2>
+                <button type="button" class="btn icon-btn close-modal" id="modal-close" aria-label="Close">
+                    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M18 6L6 18M6 6l12 12" />
+                    </svg>
+                </button>
+            </div>
+            <textarea id="yaml-output" class="yaml-preview" readonly rows="18" spellcheck="false"></textarea>
+            <div class="modal-actions">
+                <button type="button" class="btn secondary" id="copy-btn">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <rect x="9" y="9" width="13" height="13" rx="2" />
+                        <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
+                    </svg>
+                    Copy
+                </button>
+                <button type="button" class="btn primary" id="download-btn">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3" />
+                    </svg>
+                    Download .yml
+                </button>
+            </div>
+            <p id="toast" class="toast" role="status" aria-live="polite"></p>
+        </div>
+    </div>
+
+    <script src="app.js"></script>
+</body>
+
+</html>

@@ -1,0 +1,681 @@
+/**
+ * Report Builder — modular helpers for form state, YAML emission, CSV import.
+ */
+
+const $ = (sel, root = document) => root.querySelector(sel);
+
+function setInlineError(id, message) {
+    const el = document.getElementById(id);
+    if (!el) return;
+    const m = trim(message);
+    el.textContent = m;
+    el.hidden = !m;
+}
+
+function clearInlineFormErrors() {
+    setInlineError("error-name", "");
+    setInlineError("error-plan", "");
+    setInlineError("error-next", "");
+    setInlineError("error-actual", "");
+    const nameInput = $("#report-name");
+    if (nameInput) nameInput.removeAttribute("aria-invalid");
+}
+
+/** Fallback when `fetch` is unavailable (e.g. file://); keep in sync with repo CSV files. */
+const SAMPLE_CSV_FALLBACK = {
+    "sample-basics.csv": `name,place,plan1,plan2,plan3,plan4,plan5,next1,next2,next3,next4,next5,problem1,problem2,problem3,problem4,problem5
+`,
+    "sample-actual.csv": `name,branch,status,deadline,progress
+`,
+};
+
+function downloadTextFile(filename, text) {
+    const blob = new Blob([text], { type: "text/csv;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = filename;
+    a.click();
+    URL.revokeObjectURL(url);
+}
+
+async function downloadSampleCsv(filename) {
+    let text;
+    try {
+        const r = await fetch(filename);
+        if (!r.ok) throw new Error("not ok");
+        text = await r.text();
+    } catch {
+        text = SAMPLE_CSV_FALLBACK[filename];
+        if (text == null) return;
+    }
+    downloadTextFile(filename, text);
+}
+
+/**
+ * Discourages casual DevTools / view-source use. Not secure: assets and logic are still on the client.
+ */
+function attachInspectGuards() {
+    document.addEventListener("contextmenu", (e) => e.preventDefault(), { capture: true });
+
+    document.addEventListener(
+        "keydown",
+        (e) => {
+            if (e.key === "F12") {
+                e.preventDefault();
+                return;
+            }
+            const k = e.key;
+            const u = k.length === 1 ? k.toUpperCase() : k;
+            if (e.ctrlKey && e.shiftKey && "IJKCP".includes(u)) {
+                e.preventDefault();
+                return;
+            }
+            if (e.ctrlKey && u === "U") {
+                e.preventDefault();
+                return;
+            }
+            if (e.metaKey && e.altKey && "CIJU".includes(u)) {
+                e.preventDefault();
+            }
+        },
+        { capture: true }
+    );
+}
+
+function trim(s) {
+    return (s ?? "").trim();
+}
+
+function escapeYamlString(value) {
+    if (/[:#\n\r\t"'\\]/.test(value) || value.startsWith(" ") || value.endsWith(" ")) {
+        const escaped = value.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+        return `"${escaped}"`;
+    }
+    return value;
+}
+
+function formatYamlLine(parts) {
+    return parts.map((p) => (typeof p === "string" ? p : String(p))).join("");
+}
+
+/** Parse simple CSV with optional quotes; first row = headers. */
+function parseCsv(text) {
+    const rows = [];
+    let i = 0;
+    const len = text.length;
+
+    function readField() {
+        let field = "";
+        if (text[i] === '"') {
+            i++;
+            while (i < len) {
+                if (text[i] === '"') {
+                    if (text[i + 1] === '"') {
+                        field += '"';
+                        i += 2;
+                    } else {
+                        i++;
+                        break;
+                    }
+                } else {
+                    field += text[i++];
+                }
+            }
+        } else {
+            while (i < len && text[i] !== "," && text[i] !== "\n" && text[i] !== "\r") {
+                field += text[i++];
+            }
+        }
+        return field;
+    }
+
+    while (i < len) {
+        const row = [];
+        do {
+            row.push(readField());
+            if (i < len && text[i] === ",") i++;
+        } while (i < len && text[i] !== "\n" && text[i] !== "\r");
+        if (text[i] === "\r") i++;
+        if (text[i] === "\n") i++;
+        if (row.some((c) => trim(c) !== "")) rows.push(row);
+    }
+    return rows;
+}
+
+function normalizeHeader(h) {
+    return trim(h).toLowerCase().replace(/\s+/g, "_");
+}
+
+const MAX_BASICS_SLOTS = 5;
+
+function headerIndex(headers, ...candidates) {
+    for (const c of candidates) {
+        const i = headers.indexOf(c);
+        if (i >= 0) return i;
+    }
+    return -1;
+}
+
+/** Read plan1…plan5-style columns in order; skips empty cells; max `max` items. */
+function collectIndexedSlots(row, headers, base, max) {
+    const out = [];
+    for (let n = 1; n <= max; n++) {
+        const i = headerIndex(headers, `${base}${n}`, `${base}_${n}`);
+        if (i < 0) continue;
+        const v = trim(row[i]);
+        if (v) out.push(v);
+    }
+    return out.slice(0, max);
+}
+
+function normalizePlace(raw) {
+    const s = trim(raw).toLowerCase().replace(/[\s_-]+/g, " ");
+    if (s === "office") return "Office";
+    if (s === "wfh" || s === "work from home" || s === "home" || s === "remote") return "WFH";
+    return "Office";
+}
+
+/**
+ * First row after header: name, place (→ Office/WFH), plan1…5, next1…5, problem1…5.
+ * Returns null if the file does not look like a basics sheet (missing name column).
+ */
+function csvRowsToBasicsPayload(rows) {
+    if (rows.length < 2) return null;
+    const headers = rows[0].map(normalizeHeader);
+    const row = rows[1];
+
+    const iName = headerIndex(headers, "name");
+    if (iName < 0) return null;
+
+    const iPlace = headerIndex(headers, "place", "location");
+    const name = trim(row[iName]);
+    const placeRaw = iPlace >= 0 ? trim(row[iPlace]) : "";
+
+    const plans = collectIndexedSlots(row, headers, "plan", MAX_BASICS_SLOTS);
+    const nexts = collectIndexedSlots(row, headers, "next", MAX_BASICS_SLOTS);
+    const problems = collectIndexedSlots(row, headers, "problem", MAX_BASICS_SLOTS);
+
+    return {
+        name,
+        placeRaw,
+        location: normalizePlace(placeRaw),
+        plans,
+        nexts,
+        problems,
+    };
+}
+
+function csvRowsToActualObjects(rows) {
+    if (rows.length < 2) return [];
+    const headers = rows[0].map(normalizeHeader);
+    const idx = (name) => headers.indexOf(name);
+
+    const iName = idx("name");
+    const iBranch = idx("branch");
+    const iStatus = idx("status");
+    const iDeadline = idx("deadline");
+    const iProgress = idx("progress");
+
+    const out = [];
+    for (let r = 1; r < rows.length; r++) {
+        const row = rows[r];
+        const name = iName >= 0 ? trim(row[iName]) : "";
+        if (!name) continue;
+
+        let status = iStatus >= 0 ? trim(row[iStatus]) : "In Progress";
+        const s = status.toLowerCase().replace(/[\s_-]+/g, " ");
+        if (s === "completed") status = "Completed";
+        else if (s === "in progress") status = "In Progress";
+        else if (status !== "In Progress" && status !== "Completed") status = "In Progress";
+
+        let progress = iProgress >= 0 ? Number(trim(row[iProgress])) : 0;
+        if (Number.isNaN(progress)) progress = 0;
+        progress = Math.max(0, Math.min(100, Math.round(progress)));
+
+        const branch = iBranch >= 0 ? trim(row[iBranch]) : "";
+        const deadline = iDeadline >= 0 ? trim(row[iDeadline]) : "";
+
+        out.push({ name, branch, status, deadline, progress });
+    }
+    return out;
+}
+
+/** Build YAML per spec; skip empty sections and optional empty fields. */
+function buildYaml({ name, location, plans, actuals, nexts, problems }) {
+    const blocks = [];
+
+    const title = formatYamlLine(["■ ", escapeYamlString(name), "【", location, "】"]);
+    blocks.push(title);
+
+    const planItems = plans.map(trim).filter(Boolean);
+    if (planItems.length) {
+        const lines = ["Plan", ...planItems.map((p) => `    - ${escapeYamlString(p)}`)];
+        blocks.push(lines.join("\n"));
+    }
+
+    const taskChunks = [];
+    for (const a of actuals) {
+        const n = trim(a.name);
+        if (!n) continue;
+        const lines = [`    - ${escapeYamlString(n)}`];
+        if (trim(a.branch)) {
+            lines.push(`        ● branch    - ${escapeYamlString(trim(a.branch))}`);
+        }
+        lines.push(`        ● status    - ${escapeYamlString(a.status)}`);
+        if (trim(a.deadline)) {
+            lines.push(`        ● deadline  - ${escapeYamlString(trim(a.deadline))}`);
+        }
+        lines.push(`        ● progress  - ${a.progress}`);
+        taskChunks.push(lines.join("\n"));
+    }
+    if (taskChunks.length) {
+        blocks.push(["Actual", taskChunks.join("\n\n")].join("\n"));
+    }
+
+    const nextItems = nexts.map(trim).filter(Boolean);
+    if (nextItems.length) {
+        blocks.push(["Next", ...nextItems.map((n) => `    - ${escapeYamlString(n)}`)].join("\n"));
+    }
+
+    const problemItems = problems.map(trim).filter(Boolean);
+    const problemLines =
+        problemItems.length > 0
+            ? problemItems.map((p) => `    - ${escapeYamlString(p)}`)
+            : ["    - Nothing"];
+    blocks.push(["Problem", ...problemLines].join("\n"));
+
+    return blocks.join("\n\n");
+}
+
+function todayYmd() {
+    const d = new Date();
+    const y = d.getFullYear();
+    const m = String(d.getMonth() + 1).padStart(2, "0");
+    const day = String(d.getDate()).padStart(2, "0");
+    return `${y}-${m}-${day}`;
+}
+
+function safeFileName(name) {
+    const t = trim(name).replace(/[<>:"/\\|?*\u0000-\u001f]/g, "_").slice(0, 80);
+    return t || "report";
+}
+
+// ——— DOM: dynamic lists ———
+
+function stringRowTemplate(placeholder, value = "") {
+    const wrap = document.createElement("div");
+    wrap.className = "row";
+    wrap.innerHTML = `
+    <input type="text" class="flex-grow str-input" placeholder="${placeholder}" value="${value.replace(/"/g, "&quot;")}" />
+    <button type="button" class="btn icon-btn danger remove-row" title="Remove" aria-label="Remove">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2m3 0v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6h14zM10 11v6M14 11v6"/></svg>
+    </button>
+  `;
+    return wrap;
+}
+
+function actualBlockTemplate(data = {}) {
+    const name = data.name ?? "";
+    const branch = data.branch ?? "";
+    const status = data.status === "Completed" ? "Completed" : "In Progress";
+    const deadline = data.deadline ?? "";
+    const progress = typeof data.progress === "number" ? data.progress : 0;
+
+    const wrap = document.createElement("div");
+    wrap.className = "actual-block";
+    wrap.innerHTML = `
+    <div class="actual-grid">
+      <label class="field full">
+        <span class="label">Name</span>
+        <input type="text" class="act-name" value="${String(name).replace(/"/g, "&quot;")}" />
+      </label>
+      <label class="field">
+        <span class="label">Branch</span>
+        <input type="text" class="act-branch" placeholder="optional" value="${String(branch).replace(/"/g, "&quot;")}" />
+      </label>
+      <label class="field">
+        <span class="label">Status</span>
+        <select class="act-status">
+          <option value="In Progress" ${status === "In Progress" ? "selected" : ""}>In Progress</option>
+          <option value="Completed" ${status === "Completed" ? "selected" : ""}>Completed</option>
+        </select>
+      </label>
+      <label class="field">
+        <span class="label">Deadline</span>
+        <input type="date" class="act-deadline" value="${deadline.replace(/"/g, "&quot;")}" />
+      </label>
+      <label class="field full range-wrap">
+        <span class="label">Progress <span class="range-value act-progress-label">${progress}</span></span>
+        <input type="range" class="act-progress" min="0" max="100" value="${progress}" />
+      </label>
+    </div>
+    <div style="margin-top:0.65rem;display:flex;justify-content:flex-end;">
+      <button type="button" class="btn icon-btn danger remove-actual" title="Remove" aria-label="Remove row">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2m3 0v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6h14zM10 11v6M14 11v6"/></svg>
+      </button>
+    </div>
+  `;
+
+    const range = $(".act-progress", wrap);
+    const label = $(".act-progress-label", wrap);
+    range.addEventListener("input", () => {
+        label.textContent = range.value;
+    });
+
+    $(".remove-actual", wrap).addEventListener("click", () => {
+        const list = document.getElementById("actual-list");
+        if (!list || list.querySelectorAll(".actual-block").length <= 1) return;
+        wrap.remove();
+        refreshActualRemoveState(list);
+    });
+
+    return wrap;
+}
+
+function collectStrings(container) {
+    return Array.from(container.querySelectorAll(".str-input")).map((el) => trim(el.value));
+}
+
+function collectActuals(container) {
+    return Array.from(container.querySelectorAll(".actual-block")).map((block) => ({
+        name: trim($(".act-name", block).value),
+        branch: trim($(".act-branch", block).value),
+        status: $(".act-status", block).value,
+        deadline: trim($(".act-deadline", block).value),
+        progress: Number($(".act-progress", block).value) || 0,
+    }));
+}
+
+function stringListLockedTitle(container) {
+    switch (container?.id) {
+        case "plan-list":
+            return "At least one plan is needed";
+        case "next-list":
+            return "At least one next is needed";
+        case "problem-list":
+            return "At least one problem is needed";
+        default:
+            return "At least one item required";
+    }
+}
+
+function refreshStringListRemoveState(container) {
+    if (!container) return;
+    const rows = container.querySelectorAll(".row");
+    const single = rows.length <= 1;
+    const locked = stringListLockedTitle(container);
+    rows.forEach((row) => {
+        const btn = row.querySelector(".remove-row");
+        if (!btn) return;
+        btn.disabled = single;
+        btn.setAttribute("aria-disabled", single ? "true" : "false");
+        btn.title = single ? locked : "Remove";
+    });
+}
+
+function refreshActualRemoveState(container) {
+    if (!container) return;
+    const blocks = container.querySelectorAll(".actual-block");
+    const single = blocks.length <= 1;
+    blocks.forEach((block) => {
+        const btn = block.querySelector(".remove-actual");
+        if (!btn) return;
+        btn.disabled = single;
+        btn.setAttribute("aria-disabled", single ? "true" : "false");
+        btn.title = single ? "At least one actual is needed" : "Remove row";
+    });
+}
+
+function init() {
+    attachInspectGuards();
+
+    $("#download-sample-basics").addEventListener("click", () => downloadSampleCsv("sample-basics.csv"));
+    $("#download-sample-actual").addEventListener("click", () => downloadSampleCsv("sample-actual.csv"));
+
+    const planList = $("#plan-list");
+    const actualList = $("#actual-list");
+    const nextList = $("#next-list");
+    const problemList = $("#problem-list");
+
+    function bindRemoveDelegation(container) {
+        container.addEventListener("click", (e) => {
+            const btn = e.target.closest(".remove-row");
+            if (!btn || btn.disabled || !container.contains(btn)) return;
+            if (container.querySelectorAll(".row").length <= 1) return;
+            const row = btn.closest(".row");
+            row?.remove();
+            refreshStringListRemoveState(container);
+        });
+    }
+    bindRemoveDelegation(planList);
+    bindRemoveDelegation(nextList);
+    bindRemoveDelegation(problemList);
+
+    $("#report-name").addEventListener("input", () => {
+        if (trim($("#report-name").value)) {
+            setInlineError("error-name", "");
+            $("#report-name").removeAttribute("aria-invalid");
+        }
+    });
+
+    planList.addEventListener("input", (e) => {
+        if (e.target.classList?.contains("str-input") && collectStrings(planList).some((p) => trim(p))) {
+            setInlineError("error-plan", "");
+        }
+    });
+
+    nextList.addEventListener("input", (e) => {
+        if (e.target.classList?.contains("str-input") && collectStrings(nextList).some((n) => trim(n))) {
+            setInlineError("error-next", "");
+        }
+    });
+
+    actualList.addEventListener("input", (e) => {
+        if (
+            e.target.classList?.contains("act-name") &&
+            collectActuals(actualList).some((a) => trim(a.name))
+        ) {
+            setInlineError("error-actual", "");
+        }
+    });
+
+    $("#add-plan").addEventListener("click", () => {
+        planList.appendChild(stringRowTemplate("Plan item"));
+        refreshStringListRemoveState(planList);
+    });
+    $("#add-next").addEventListener("click", () => {
+        nextList.appendChild(stringRowTemplate("Next item"));
+        refreshStringListRemoveState(nextList);
+    });
+    $("#add-problem").addEventListener("click", () => {
+        problemList.appendChild(stringRowTemplate("Problem item"));
+        refreshStringListRemoveState(problemList);
+    });
+    $("#add-actual").addEventListener("click", () => {
+        actualList.appendChild(actualBlockTemplate());
+        refreshActualRemoveState(actualList);
+    });
+
+    function fillStringList(container, values, placeholder) {
+        container.innerHTML = "";
+        const list = values.slice(0, MAX_BASICS_SLOTS).filter((v) => trim(v));
+        if (list.length === 0) {
+            container.appendChild(stringRowTemplate(placeholder));
+            refreshStringListRemoveState(container);
+            return;
+        }
+        list.forEach((v) => container.appendChild(stringRowTemplate(placeholder, v)));
+        refreshStringListRemoveState(container);
+    }
+
+    $("#basics-csv").addEventListener("change", (e) => {
+        const file = e.target.files && e.target.files[0];
+        e.target.value = "";
+        if (!file) return;
+        const reader = new FileReader();
+        reader.onload = () => {
+            const text = String(reader.result || "").replace(/^\uFEFF/, "");
+            const rows = parseCsv(text);
+            const payload = csvRowsToBasicsPayload(rows);
+            if (!payload) {
+                alert('Basics CSV needs a header row with a "name" column and at least one data row.');
+                return;
+            }
+            $("#report-name").value = payload.name;
+            $("#report-location").value = payload.location;
+            fillStringList(planList, payload.plans, "Plan item");
+            fillStringList(nextList, payload.nexts, "Next item");
+            fillStringList(problemList, payload.problems, "Problem item");
+        };
+        reader.readAsText(file, "UTF-8");
+    });
+
+    $("#actual-csv").addEventListener("change", (e) => {
+        const file = e.target.files && e.target.files[0];
+        e.target.value = "";
+        if (!file) return;
+        const reader = new FileReader();
+        reader.onload = () => {
+            const text = String(reader.result || "").replace(/^\uFEFF/, "");
+            const rows = parseCsv(text);
+            const objs = csvRowsToActualObjects(rows);
+            if (!objs.length) return;
+            actualList.innerHTML = "";
+            objs.forEach((o) => actualList.appendChild(actualBlockTemplate(o)));
+            refreshActualRemoveState(actualList);
+        };
+        reader.readAsText(file, "UTF-8");
+    });
+
+    // Seed one row each
+    planList.appendChild(stringRowTemplate("Plan item"));
+    actualList.appendChild(actualBlockTemplate());
+    nextList.appendChild(stringRowTemplate("Next item"));
+    problemList.appendChild(stringRowTemplate("Problem item"));
+    refreshStringListRemoveState(planList);
+    refreshStringListRemoveState(nextList);
+    refreshStringListRemoveState(problemList);
+    refreshActualRemoveState(actualList);
+
+    const overlay = $("#modal-overlay");
+    const yamlOut = $("#yaml-output");
+    let lastDownloadName = "report.yml";
+    let lastYaml = "";
+
+    function openModal(yaml, filename) {
+        lastYaml = yaml;
+        lastDownloadName = filename;
+        yamlOut.value = yaml;
+        overlay.hidden = false;
+        document.body.style.overflow = "hidden";
+        yamlOut.focus();
+        yamlOut.select();
+    }
+
+    function closeModal() {
+        overlay.hidden = true;
+        document.body.style.overflow = "";
+        $("#toast").textContent = "";
+    }
+
+    $("#generate-btn").addEventListener("click", () => {
+        clearInlineFormErrors();
+
+        const name = trim($("#report-name").value);
+        const plans = collectStrings(planList);
+        const nexts = collectStrings(nextList);
+        const actualsRaw = collectActuals(actualList);
+        const actualsValid = actualsRaw.filter((a) => trim(a.name));
+
+        const nameInvalid = !name;
+        const planInvalid = !plans.some((p) => trim(p));
+        const nextInvalid = !nexts.some((n) => trim(n));
+        const actualInvalid = actualsValid.length === 0;
+
+        if (nameInvalid) {
+            setInlineError("error-name", "Please enter a name.");
+            $("#report-name").setAttribute("aria-invalid", "true");
+        }
+        if (planInvalid) {
+            setInlineError("error-plan", "At least one plan is needed.");
+        }
+        if (nextInvalid) {
+            setInlineError("error-next", "At least one next is needed.");
+        }
+        if (actualInvalid) {
+            setInlineError("error-actual", "At least one actual is needed.");
+        }
+
+        if (nameInvalid || planInvalid || nextInvalid || actualInvalid) {
+            if (nameInvalid) {
+                $("#report-name").focus();
+                $("#error-name").scrollIntoView({ block: "nearest", behavior: "smooth" });
+            } else if (planInvalid) {
+                planList.querySelector(".str-input")?.focus();
+                $("#error-plan").scrollIntoView({ block: "nearest", behavior: "smooth" });
+            } else if (nextInvalid) {
+                nextList.querySelector(".str-input")?.focus();
+                $("#error-next").scrollIntoView({ block: "nearest", behavior: "smooth" });
+            } else {
+                actualList.querySelector(".act-name")?.focus();
+                $("#error-actual").scrollIntoView({ block: "nearest", behavior: "smooth" });
+            }
+            return;
+        }
+
+        const location = $("#report-location").value;
+
+        const yaml = buildYaml({
+            name,
+            location,
+            plans,
+            actuals: actualsValid,
+            nexts,
+            problems: collectStrings(problemList),
+        });
+
+        const fname = `${safeFileName(name)}_${todayYmd()}.yml`;
+        openModal(yaml, fname);
+    });
+
+    $("#modal-close").addEventListener("click", closeModal);
+    $(".close-modal", overlay).addEventListener("click", closeModal);
+    overlay.addEventListener("click", (e) => {
+        if (e.target === overlay) closeModal();
+    });
+    document.addEventListener("keydown", (e) => {
+        if (e.key === "Escape" && !overlay.hidden) closeModal();
+    });
+
+    $("#copy-btn").addEventListener("click", async () => {
+        const toast = $("#toast");
+        try {
+            await navigator.clipboard.writeText(lastYaml);
+            toast.textContent = "Copied to clipboard.";
+        } catch {
+            yamlOut.select();
+            document.execCommand("copy");
+            toast.textContent = "Copied (fallback).";
+        }
+        setTimeout(() => {
+            if (toast.textContent.startsWith("Copied")) toast.textContent = "";
+        }, 2500);
+    });
+
+    $("#download-btn").addEventListener("click", () => {
+        const blob = new Blob([lastYaml], { type: "text/yaml;charset=utf-8" });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = lastDownloadName;
+        a.click();
+        URL.revokeObjectURL(url);
+    });
+}
+
+if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", init);
+} else {
+    init();
+}
