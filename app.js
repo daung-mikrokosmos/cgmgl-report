@@ -246,12 +246,12 @@ function buildYaml({ name, location, plans, actuals, nexts, problems }) {
     const blocks = [];
 
     const title = formatYamlLine(["■ ", escapeYamlString(name), "【", location, "】"]);
-    blocks.push(title);
-
     const planItems = plans.map(trim).filter(Boolean);
     if (planItems.length) {
-        const lines = ["Plan", ...planItems.map((p) => `    - ${escapeYamlString(p)}`)];
-        blocks.push(lines.join("\n"));
+        const planBlock = ["Plan", ...planItems.map((p) => `    - ${escapeYamlString(p)}`)].join("\n");
+        blocks.push([title, planBlock].join("\n"));
+    } else {
+        blocks.push(title);
     }
 
     const taskChunks = [];
@@ -266,7 +266,7 @@ function buildYaml({ name, location, plans, actuals, nexts, problems }) {
         if (trim(a.deadline)) {
             lines.push(`        ● deadline  - ${escapeYamlString(trim(a.deadline))}`);
         }
-        lines.push(`        ● progress  - ${a.progress}`);
+        lines.push(`        ● progress  - ${a.progress}%`);
         taskChunks.push(lines.join("\n"));
     }
     if (taskChunks.length) {
