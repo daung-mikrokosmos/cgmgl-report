@@ -32,13 +32,20 @@
                     </svg>
                     Actual sample.csv
                 </button>
+                <button type="button" class="btn secondary sample-dl-btn" id="download-sample-morning"
+                    title="Download sample-morning.csv">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3" />
+                    </svg>
+                    Morning sample.csv
+                </button>
             </div>
         </header>
 
         <section class="card glass" aria-labelledby="meta-heading">
             <div class="card-head">
                 <h2 id="meta-heading" class="card-title">Basics</h2>
-                <label class="btn file-btn" title="Import basics from CSV (name, place, plans, next, problems)">
+                <label class="btn file-btn" title="Import basics from CSV (name, place, plans; optional next &amp; problems)">
                     <input type="file" id="basics-csv" accept=".csv,text/csv" hidden />
                     <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                         <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M17 8l-5-5-5 5M12 3v12" />
@@ -46,9 +53,11 @@
                     <span>CSV</span>
                 </label>
             </div>
-            <p class="hint basics-hint">Basics CSV: <code>name</code>, <code>place</code>,
-                <code>plan1</code>…<code>plan5</code>, <code>next1</code>…<code>next5</code>,
-                <code>problem1</code>…<code>problem5</code> (first data row; max 5 each).
+            <p class="hint basics-hint">CSV: <code>name</code>, <code>place</code>,
+                <code>plan1</code>…<code>plan5</code>, optional <code>next1</code>…<code>next5</code> and
+                <code>problem1</code>…<code>problem5</code> (first data row only; max 5 each).
+                A short sheet with only name, place, and plans works the same way.<br>
+                *A morning sheet with only <code>name</code>, <code>place</code> and <code>plans</code> works the same way.
             </p>
             <div class="grid two">
                 <label class="field">
@@ -78,7 +87,6 @@
                 </button>
             </div>
             <div id="plan-list" class="dynamic-list"></div>
-            <p id="error-plan" class="field-error field-error-block" role="alert" hidden></p>
         </section>
 
         <section class="card glass" aria-labelledby="actual-heading">
@@ -102,11 +110,10 @@
                     </button>
                 </div>
             </div>
-            <p class="hint">CSV columns: <code>name</code>, <code>branch</code>, <code>status</code>,
-                <code>deadline</code>, <code>progress</code>
+            <p class="hint">CSV columns: <code>name</code>, <code>branch</code>, <code>deadline</code>,
+                <code>progress</code> (0–100; status is derived from progress for YAML)
             </p>
             <div id="actual-list" class="dynamic-list actual-list"></div>
-            <p id="error-actual" class="field-error field-error-block" role="alert" hidden></p>
         </section>
 
         <section class="card glass" aria-labelledby="next-heading">
@@ -120,7 +127,6 @@
                 </button>
             </div>
             <div id="next-list" class="dynamic-list"></div>
-            <p id="error-next" class="field-error field-error-block" role="alert" hidden></p>
         </section>
 
         <section class="card glass" aria-labelledby="problem-heading">
