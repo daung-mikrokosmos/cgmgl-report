@@ -53,7 +53,7 @@ In the **Actual** card, use **CSV** to choose a file. Expected columns (header r
 `name`, `branch`, `status`, `deadline`, `progress`
 
 - Parsing supports **quoted fields** and a UTF-8 **BOM** on the first line.
-- **status** must be `In Progress` or `Completed` (otherwise defaults to `In Progress`).
+- **status** must be `ess` or `Completed` (otherwise defaults to `In Progress`).
 - **progress** is coerced to `0`–`100`.
 - Rows without a **name** are skipped. Import **replaces** all existing Actual rows.
 

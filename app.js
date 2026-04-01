@@ -14,9 +14,6 @@ function setInlineError(id, message) {
 
 function clearInlineFormErrors() {
     setInlineError("error-name", "");
-    setInlineError("error-plan", "");
-    setInlineError("error-next", "");
-    setInlineError("error-actual", "");
     const nameInput = $("#report-name");
     if (nameInput) nameInput.removeAttribute("aria-invalid");
 }
@@ -24,8 +21,15 @@ function clearInlineFormErrors() {
 /** Fallback when `fetch` is unavailable (e.g. file://); keep in sync with repo CSV files. */
 const SAMPLE_CSV_FALLBACK = {
     "sample-basics.csv": `name,place,plan1,plan2,plan3,plan4,plan5,next1,next2,next3,next4,next5,problem1,problem2,problem3,problem4,problem5
+Alex Chen,Office,Finish API design,Write unit tests,Update documentation,,,Ship v1.2 to staging,Pair review with team,Schedule retro,,,None blocking,,,
 `,
-    "sample-actual.csv": `name,branch,status,deadline,progress
+    "sample-actual.csv": `name,branch,deadline,progress
+Auth service hardening,feature/auth-hardening,2026-04-15,65
+Dashboard charts bugfix,hotfix/charts-null,2026-04-02,100
+Migrate legacy reports,refactor/reports-v2,2026-05-01,10
+`,
+    "sample-morning.csv": `name,place,plan1,plan2,plan3,plan4,plan5
+Alex Chen,Office,Morning standup,Review sprint board,,,
 `,
 };
 
@@ -213,9 +217,9 @@ function csvRowsToActualObjects(rows) {
 
     const iName = idx("name");
     const iBranch = idx("branch");
-    const iStatus = idx("status");
     const iDeadline = idx("deadline");
     const iProgress = idx("progress");
+    const iStatus = idx("status");
 
     const out = [];
     for (let r = 1; r < rows.length; r++) {
@@ -223,15 +227,15 @@ function csvRowsToActualObjects(rows) {
         const name = iName >= 0 ? trim(row[iName]) : "";
         if (!name) continue;
 
-        let status = iStatus >= 0 ? trim(row[iStatus]) : "In Progress";
-        const s = status.toLowerCase().replace(/[\s_-]+/g, " ");
-        if (s === "completed") status = "Completed";
-        else if (s === "in progress") status = "In Progress";
-        else if (status !== "In Progress" && status !== "Completed") status = "In Progress";
-
-        let progress = iProgress >= 0 ? Number(trim(row[iProgress])) : 0;
+        let progress = iProgress >= 0 ? Number(trim(row[iProgress])) : NaN;
+        if (Number.isNaN(progress) && iStatus >= 0) {
+            const st = trim(row[iStatus]).toLowerCase().replace(/[\s_-]+/g, " ");
+            progress = st === "completed" ? 100 : 0;
+        }
         if (Number.isNaN(progress)) progress = 0;
         progress = Math.max(0, Math.min(100, Math.round(progress)));
+
+        const status = progress >= 100 ? "Completed" : "In Progress";
 
         const branch = iBranch >= 0 ? trim(row[iBranch]) : "";
         const deadline = iDeadline >= 0 ? trim(row[iDeadline]) : "";
@@ -315,12 +319,24 @@ function stringRowTemplate(placeholder, value = "") {
     return wrap;
 }
 
+function clampProgress(n) {
+    const x = Number(n);
+    if (Number.isNaN(x)) return 0;
+    return Math.max(0, Math.min(100, Math.round(x)));
+}
+
+function statusFromProgress(p) {
+    return clampProgress(p) >= 100 ? "Completed" : "In Progress";
+}
+
 function actualBlockTemplate(data = {}) {
     const name = data.name ?? "";
     const branch = data.branch ?? "";
-    const status = data.status === "Completed" ? "Completed" : "In Progress";
     const deadline = data.deadline ?? "";
-    const progress = typeof data.progress === "number" ? data.progress : 0;
+    let progress =
+        typeof data.progress === "number"
+            ? clampProgress(data.progress)
+            : clampProgress(data.status === "Completed" ? 100 : 0);
 
     const wrap = document.createElement("div");
     wrap.className = "actual-block";
@@ -335,20 +351,23 @@ function actualBlockTemplate(data = {}) {
         <input type="text" class="act-branch" placeholder="optional" value="${String(branch).replace(/"/g, "&quot;")}" />
       </label>
       <label class="field">
-        <span class="label">Status</span>
-        <select class="act-status">
-          <option value="In Progress" ${status === "In Progress" ? "selected" : ""}>In Progress</option>
-          <option value="Completed" ${status === "Completed" ? "selected" : ""}>Completed</option>
-        </select>
-      </label>
-      <label class="field">
         <span class="label">Deadline</span>
         <input type="date" class="act-deadline" value="${deadline.replace(/"/g, "&quot;")}" />
       </label>
-      <label class="field full range-wrap">
-        <span class="label">Progress <span class="range-value act-progress-label">${progress}</span></span>
-        <input type="range" class="act-progress" min="0" max="100" value="${progress}" />
-      </label>
+      <div class="field full progress-field">
+        <span class="label">Progress (0–100)</span>
+        <div class="progress-row">
+          <label class="progress-num-wrap">
+            <span class="visually-hidden">Progress percent</span>
+            <input type="number" class="act-progress-num" min="0" max="100" step="1" value="${progress}" inputmode="numeric" />
+            <span class="progress-num-suffix" aria-hidden="true">%</span>
+          </label>
+          <div class="progress-bar-track" role="slider" tabindex="0" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${progress}" aria-valuetext="${progress}%" aria-label="Adjust progress by dragging or clicking the bar">
+            <div class="progress-bar-fill act-progress-fill" style="width: ${progress}%"></div>
+          </div>
+        </div>
+        <p class="act-status-readout" aria-live="polite">${statusFromProgress(progress)}</p>
+      </div>
     </div>
     <div style="margin-top:0.65rem;display:flex;justify-content:flex-end;">
       <button type="button" class="btn icon-btn danger remove-actual" title="Remove" aria-label="Remove row">
@@ -357,10 +376,76 @@ function actualBlockTemplate(data = {}) {
     </div>
   `;
 
-    const range = $(".act-progress", wrap);
-    const label = $(".act-progress-label", wrap);
-    range.addEventListener("input", () => {
-        label.textContent = range.value;
+    const num = $(".act-progress-num", wrap);
+    const fill = $(".act-progress-fill", wrap);
+    const track = $(".progress-bar-track", wrap);
+    const readout = $(".act-status-readout", wrap);
+
+    function applyProgress(raw) {
+        const p = clampProgress(raw);
+        num.value = String(p);
+        fill.style.width = `${p}%`;
+        track.setAttribute("aria-valuenow", String(p));
+        track.setAttribute("aria-valuetext", `${p}%`);
+        readout.textContent = statusFromProgress(p);
+    }
+
+    function progressFromClientX(clientX) {
+        const rect = track.getBoundingClientRect();
+        if (rect.width <= 0) return;
+        const ratio = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width));
+        applyProgress(Math.round(ratio * 100));
+    }
+
+    let barDragging = false;
+
+    num.addEventListener("input", () => applyProgress(num.value));
+    num.addEventListener("blur", () => applyProgress(num.value));
+
+    track.addEventListener("pointerdown", (e) => {
+        if (e.button !== 0) return;
+        barDragging = true;
+        track.classList.add("is-dragging");
+        track.setPointerCapture(e.pointerId);
+        progressFromClientX(e.clientX);
+    });
+    track.addEventListener("pointermove", (e) => {
+        if (!barDragging) return;
+        progressFromClientX(e.clientX);
+    });
+    function endBarDrag(e) {
+        if (barDragging) {
+            barDragging = false;
+            track.classList.remove("is-dragging");
+            if (track.hasPointerCapture(e.pointerId)) {
+                track.releasePointerCapture(e.pointerId);
+            }
+        }
+    }
+    track.addEventListener("pointerup", endBarDrag);
+    track.addEventListener("pointercancel", endBarDrag);
+
+    track.addEventListener("keydown", (e) => {
+        const cur = clampProgress(num.value);
+        if (e.key === "ArrowLeft" || e.key === "ArrowDown") {
+            e.preventDefault();
+            applyProgress(cur - 1);
+        } else if (e.key === "ArrowRight" || e.key === "ArrowUp") {
+            e.preventDefault();
+            applyProgress(cur + 1);
+        } else if (e.key === "Home") {
+            e.preventDefault();
+            applyProgress(0);
+        } else if (e.key === "End") {
+            e.preventDefault();
+            applyProgress(100);
+        } else if (e.key === "PageDown") {
+            e.preventDefault();
+            applyProgress(cur - 10);
+        } else if (e.key === "PageUp") {
+            e.preventDefault();
+            applyProgress(cur + 10);
+        }
     });
 
     $(".remove-actual", wrap).addEventListener("click", () => {
@@ -378,13 +463,16 @@ function collectStrings(container) {
 }
 
 function collectActuals(container) {
-    return Array.from(container.querySelectorAll(".actual-block")).map((block) => ({
-        name: trim($(".act-name", block).value),
-        branch: trim($(".act-branch", block).value),
-        status: $(".act-status", block).value,
-        deadline: trim($(".act-deadline", block).value),
-        progress: Number($(".act-progress", block).value) || 0,
-    }));
+    return Array.from(container.querySelectorAll(".actual-block")).map((block) => {
+        const progress = clampProgress($(".act-progress-num", block).value);
+        return {
+            name: trim($(".act-name", block).value),
+            branch: trim($(".act-branch", block).value),
+            status: statusFromProgress(progress),
+            deadline: trim($(".act-deadline", block).value),
+            progress,
+        };
+    });
 }
 
 function stringListLockedTitle(container) {
@@ -432,6 +520,7 @@ function init() {
 
     $("#download-sample-basics").addEventListener("click", () => downloadSampleCsv("sample-basics.csv"));
     $("#download-sample-actual").addEventListener("click", () => downloadSampleCsv("sample-actual.csv"));
+    $("#download-sample-morning").addEventListener("click", () => downloadSampleCsv("sample-morning.csv"));
 
     const planList = $("#plan-list");
     const actualList = $("#actual-list");
@@ -456,27 +545,6 @@ function init() {
         if (trim($("#report-name").value)) {
             setInlineError("error-name", "");
             $("#report-name").removeAttribute("aria-invalid");
-        }
-    });
-
-    planList.addEventListener("input", (e) => {
-        if (e.target.classList?.contains("str-input") && collectStrings(planList).some((p) => trim(p))) {
-            setInlineError("error-plan", "");
-        }
-    });
-
-    nextList.addEventListener("input", (e) => {
-        if (e.target.classList?.contains("str-input") && collectStrings(nextList).some((n) => trim(n))) {
-            setInlineError("error-next", "");
-        }
-    });
-
-    actualList.addEventListener("input", (e) => {
-        if (
-            e.target.classList?.contains("act-name") &&
-            collectActuals(actualList).some((a) => trim(a.name))
-        ) {
-            setInlineError("error-actual", "");
         }
     });
 
@@ -583,54 +651,25 @@ function init() {
         clearInlineFormErrors();
 
         const name = trim($("#report-name").value);
-        const plans = collectStrings(planList);
-        const nexts = collectStrings(nextList);
-        const actualsRaw = collectActuals(actualList);
-        const actualsValid = actualsRaw.filter((a) => trim(a.name));
+        const location = $("#report-location").value;
 
-        const nameInvalid = !name;
-        const planInvalid = !plans.some((p) => trim(p));
-        const nextInvalid = !nexts.some((n) => trim(n));
-        const actualInvalid = actualsValid.length === 0;
-
-        if (nameInvalid) {
+        if (!name) {
             setInlineError("error-name", "Please enter a name.");
             $("#report-name").setAttribute("aria-invalid", "true");
-        }
-        if (planInvalid) {
-            setInlineError("error-plan", "At least one plan is needed.");
-        }
-        if (nextInvalid) {
-            setInlineError("error-next", "At least one next is needed.");
-        }
-        if (actualInvalid) {
-            setInlineError("error-actual", "At least one actual is needed.");
-        }
-
-        if (nameInvalid || planInvalid || nextInvalid || actualInvalid) {
-            if (nameInvalid) {
-                $("#report-name").focus();
-                $("#error-name").scrollIntoView({ block: "nearest", behavior: "smooth" });
-            } else if (planInvalid) {
-                planList.querySelector(".str-input")?.focus();
-                $("#error-plan").scrollIntoView({ block: "nearest", behavior: "smooth" });
-            } else if (nextInvalid) {
-                nextList.querySelector(".str-input")?.focus();
-                $("#error-next").scrollIntoView({ block: "nearest", behavior: "smooth" });
-            } else {
-                actualList.querySelector(".act-name")?.focus();
-                $("#error-actual").scrollIntoView({ block: "nearest", behavior: "smooth" });
-            }
+            $("#report-name").focus();
+            $("#error-name").scrollIntoView({ block: "nearest", behavior: "smooth" });
             return;
         }
 
-        const location = $("#report-location").value;
+        const plans = collectStrings(planList);
+        const nexts = collectStrings(nextList);
+        const actualsRaw = collectActuals(actualList);
 
         const yaml = buildYaml({
             name,
             location,
             plans,
-            actuals: actualsValid,
+            actuals: actualsRaw,
             nexts,
             problems: collectStrings(problemList),
         });
