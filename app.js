@@ -235,7 +235,7 @@ function csvRowsToActualObjects(rows) {
         if (Number.isNaN(progress)) progress = 0;
         progress = Math.max(0, Math.min(100, Math.round(progress)));
 
-        const status = progress >= 100 ? "Completed" : "In Progress";
+        const status = progress >= 100 ? "completed" : "in progress";
 
         const branch = iBranch >= 0 ? trim(row[iBranch]) : "";
         const deadline = iDeadline >= 0 ? trim(row[iDeadline]) : "";
@@ -266,10 +266,10 @@ function buildYaml({ name, location, plans, actuals, nexts, problems }) {
         if (trim(a.branch)) {
             lines.push(`        ● branch    - ${escapeYamlString(trim(a.branch))}`);
         }
-        lines.push(`        ● status    - ${escapeYamlString(a.status)}`);
         if (trim(a.deadline)) {
             lines.push(`        ● deadline  - ${escapeYamlString(trim(a.deadline))}`);
         }
+        lines.push(`        ● status    - ${escapeYamlString(a.status)}`);
         lines.push(`        ● progress  - ${a.progress}%`);
         taskChunks.push(lines.join("\n"));
     }
@@ -326,7 +326,7 @@ function clampProgress(n) {
 }
 
 function statusFromProgress(p) {
-    return clampProgress(p) >= 100 ? "Completed" : "In Progress";
+    return clampProgress(p) >= 100 ? "completed" : "in progress";
 }
 
 function actualBlockTemplate(data = {}) {
